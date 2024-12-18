@@ -4,15 +4,16 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QIcon
+from add_smartphone_window import AddSmartphoneWindow
+from model import Database
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.setWindowTitle('SELL FOR SMARTPHONE')
+        self.setMinimumSize(1200, 900)
+        self.resize(1200, 900)
 
-        self.setWindowTitle('SELL FOR SMARTPHONE')  # Установка заголовка окна приложения
-        self.setGeometry(0, 0, 1920, 1080)  # Установка размеров и положения окна
-
-        # Единый стиль для всех элементов
         self.setStyleSheet("""
             QPushButton { height: 50px; font-size: 16px; }
             QLabel { font-size: 52px; font-family: Arial; }
@@ -66,6 +67,7 @@ class MainWindow(QMainWindow):
 
         # Показ раздела "Каталог" при открытии приложения
         self.show_catalog()
+
 
     def show_catalog(self):
         catalog_layout = QHBoxLayout()  # Для размещения таблицы и правого контейнера
@@ -350,9 +352,9 @@ class MainWindow(QMainWindow):
         # Кнопка добавления рядом с строкой поиска
         add_button = QPushButton()
         add_button.setFixedSize(50, 50)
-        add_button.setIcon(QIcon('image\add_smatphone.png'))
+        add_button.setIcon(QIcon('image/add_smatphone.png'))
         add_button.setIconSize(add_button.size())
-        # TODO: Добавить функцию для кнопки добавления
+        add_button.clicked.connect(self.open_add_smartphone_window)  # Подключение к новой функции
 
         top_layout.addWidget(management_top_button)
         top_layout.addWidget(search_bar)
@@ -383,6 +385,11 @@ class MainWindow(QMainWindow):
         new_content_layout.addLayout(management_layout)
 
         self.replace_content_widget(new_content_widget)
+
+    def open_add_smartphone_window(self):
+        self.add_window = AddSmartphoneWindow()
+        self.add_window.exec_()
+
     def show_sales(self):
         sales_layout = QVBoxLayout()
 
@@ -420,14 +427,15 @@ class MainWindow(QMainWindow):
         new_content_layout.addLayout(sales_layout)
 
         self.replace_content_widget(new_content_widget)
-
-
-
-            
+     
 
     def replace_content_widget(self, new_widget):
         self.main_splitter.widget(1).deleteLater()
         self.main_splitter.insertWidget(1, new_widget)
+
+    def closeEvent(self, event):
+        self.db.close()
+        event.accept()
 
 if __name__ == '__main__':
     app = QApplication([])
