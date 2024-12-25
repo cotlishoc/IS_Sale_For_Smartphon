@@ -1,11 +1,11 @@
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QPushButton, QVBoxLayout, QHBoxLayout, QWidget, QSplitter,
-    QLabel, QLineEdit, QTableWidget, QTableWidgetItem
+    QLabel, QLineEdit, QTableWidget, QTableWidgetItem, QMessageBox
 )
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QSize
 from PyQt5.QtGui import QIcon
 from add_smartphone_window import AddSmartphoneWindow
-from model import Database
+from model import db
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -92,8 +92,19 @@ class MainWindow(QMainWindow):
         table_widget_catalog = QTableWidget()
         table_widget_catalog.setColumnCount(5)
         table_widget_catalog.setHorizontalHeaderLabels([
-            'Порядковый номер', 'Название', 'Артикул', 'В наличии', 'Цена'
+            'Название', 'Артикул', 'В наличии', 'Цена', 'pk'
         ])
+        table_widget_catalog.setColumnHidden(4, True)
+
+        phones = db.fetch_query('SELECT `model`, `article`, `in_stock`, `price`, `smartphone_id` FROM `smartphone`')
+
+        for row_data in phones:
+            row_position = table_widget_catalog.rowCount()
+            table_widget_catalog.insertRow(row_position)
+            for col, value in enumerate(row_data):
+                table_widget_catalog.setItem(row_position, col, QTableWidgetItem(str(value)))
+
+
 
         left_layout.addWidget(top_container)
         left_layout.addWidget(table_widget_catalog)
@@ -205,6 +216,21 @@ class MainWindow(QMainWindow):
 
         self.replace_content_widget(new_content_widget)
 
+        def get_selected_id():
+            selected_row = table_widget_catalog.currentRow()
+
+            # Извлекаем значение из первого столбца (ID)
+            if selected_row != -1:  # Если строка выделена
+                item = table_widget_catalog.item(selected_row, 4)  # Первый столбец
+                if item:  # Проверяем, есть ли значение
+                    id_value = item.text()
+            params = db.fetch_query('SELECT `model`, `article` FROM `smartphone` where `smartphone_id` = %s', (id_value, ))[0]
+            title_label.setText(params[0])
+            article_label.setText(params[1])
+
+            
+        table_widget_catalog.itemSelectionChanged.connect(get_selected_id)
+
 
 
     def show_clients(self):
@@ -222,10 +248,23 @@ class MainWindow(QMainWindow):
         bottom_layout = QVBoxLayout()
 
         table_widget_clients = QTableWidget()
-        table_widget_clients.setColumnCount(3)
+        table_widget_clients.setColumnCount(2)
+
+        # Выполняем запрос
+        clients = db.fetch_query('SELECT CONCAT(`lastname`, " ", `firstname`, " ", `patronymic`), `phone_number` FROM `client`')
+
+        # Устанавливаем заголовки столбцов
         table_widget_clients.setHorizontalHeaderLabels([
-            'Порядковый номер', 'ФИО', 'Номер телефона'
+            'ФИО', 'Номер телефона'
         ])
+
+        # Заполняем таблицу данными
+        for client in clients:
+            row_position = table_widget_clients.rowCount()
+            table_widget_clients.insertRow(row_position)
+            
+            for col, value in enumerate(client):
+                table_widget_clients.setItem(row_position, col, QTableWidgetItem(str(value)))
 
         bottom_layout.addWidget(table_widget_clients)
         bottom_container.setLayout(bottom_layout)
@@ -365,12 +404,36 @@ class MainWindow(QMainWindow):
         bottom_container = QWidget()
         bottom_layout = QVBoxLayout()
 
+        managments = db.fetch_query('SELECT `smartphone_id`, `model`, `article`, `in_stock`, `price` FROM `smartphone`')
+
         table_widget_management = QTableWidget()
         table_widget_management.setColumnCount(7)
         table_widget_management.setHorizontalHeaderLabels([
-            'Порядковый номер', 'Название', 'Артикул', 'В наличии', 'Цена', 'Редактировать', 'Удалить'
+            'pk', 'Название', 'Артикул', 'В наличии', 'Цена', ' ', ' '
         ])
 
+        table_widget_management.setColumnHidden(0, True)
+
+        for i in managments:
+            row_position = table_widget_management.rowCount()
+            table_widget_management.insertRow(row_position)
+            for col, value in enumerate(i):
+                table_widget_management.setItem(row_position, col, QTableWidgetItem(str(value)))
+
+            edit_button = QPushButton()
+            edit_button.clicked.connect(lambda _, smartphone_id=i[0]: self.open_edit_smartphone_window(smartphone_id))
+            edit_button.setIcon(QIcon('image/pen.png'))
+            edit_button.setIconSize(QSize(20, 20))
+            table_widget_management.setCellWidget(row_position, 5, edit_button)
+            
+            #TODO: Добавить функцию для кнопки удаления
+            delete_button = QPushButton()
+            delete_button.clicked.connect(lambda _, smartphone_id=i[0], row=row_position: self.delete_smartphone(smartphone_id, row, table_widget_management))
+            delete_button.setIcon(QIcon('image/clear.png'))
+            delete_button.setIconSize(QSize(20, 20))
+            table_widget_management.setCellWidget(row_position, 6, delete_button)
+
+        
         bottom_layout.addWidget(table_widget_management)
         bottom_container.setLayout(bottom_layout)
 
@@ -389,6 +452,38 @@ class MainWindow(QMainWindow):
     def open_add_smartphone_window(self):
         self.add_window = AddSmartphoneWindow()
         self.add_window.exec_()
+
+
+    # def delete_smartphone(self, smartphone_id, row, table_widget):
+        
+        
+
+
+    def open_edit_smartphone_window(self, smartphone_id):
+        smartphone_data = db.fetch_query(
+            '''
+            SELECT `model`, `article`, `price`, `in_stock`, `characteristic`, `brand_id`
+            FROM `smartphone`
+            WHERE `smartphone_id` = %s
+            ''',
+            (smartphone_id,)
+        )
+        if smartphone_data:
+            data = smartphone_data[0]
+            self.add_window = AddSmartphoneWindow()
+            self.add_window.article_input.setText(data[1])
+            self.add_window.model_input.setText(data[0])
+            self.add_window.price_input.setText(str(data[2]))
+            self.add_window.stock_input.setText(str(data[3]))
+            self.add_window.description_input.setPlainText(data[4])
+            brand_name = db.fetch_query('SELECT `name` FROM `brand` WHERE `brand_id` = %s', (data[5],))[0][0]
+            self.add_window.brand_input.setCurrentText(brand_name)
+
+            # Передача ID смартфона в обработчик кнопки сохранения
+            self.add_window.save_button.clicked.disconnect()  # Убираем предыдущие подключения
+            self.add_window.save_button.clicked.connect(lambda: self.add_window.save_smartphone(smartphone_id))
+            self.add_window.exec_()
+
 
     def show_sales(self):
         sales_layout = QVBoxLayout()
@@ -432,10 +527,6 @@ class MainWindow(QMainWindow):
     def replace_content_widget(self, new_widget):
         self.main_splitter.widget(1).deleteLater()
         self.main_splitter.insertWidget(1, new_widget)
-
-    def closeEvent(self, event):
-        self.db.close()
-        event.accept()
 
 if __name__ == '__main__':
     app = QApplication([])

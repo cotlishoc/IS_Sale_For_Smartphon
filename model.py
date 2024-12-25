@@ -38,7 +38,7 @@ class Database(MySQLConnection):
             super().close()
 
 
-db = Database(host='sql8.freesqldatabase.com',
-              user='sql8751150',
-              password='7M3PafQQsS',
-              database='sql8751150')
+db = Database(host='127.0.0.2',
+              user='root',
+              password='your_password',
+              database='sellsmartphone')
