@@ -40,5 +40,5 @@ class Database(MySQLConnection):
 
 db = Database(host='127.0.0.2',
               user='root',
-              password='your_password',
+              password='DKergnsgt21@',
               database='sellsmartphone')

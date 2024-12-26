@@ -1,11 +1,12 @@
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QPushButton, QVBoxLayout, QHBoxLayout, QWidget, QSplitter,
-    QLabel, QLineEdit, QTableWidget, QTableWidgetItem, QMessageBox
+    QLabel, QLineEdit, QTableWidget, QTableWidgetItem, QMessageBox, QComboBox
 )
 from PyQt5.QtCore import Qt, QSize
 from PyQt5.QtGui import QIcon
 from add_smartphone_window import AddSmartphoneWindow
 from model import db
+import uuid
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -85,6 +86,18 @@ class MainWindow(QMainWindow):
         search_bar = QLineEdit()
         search_bar.setPlaceholderText('Поиск по каталогу...')
 
+        def filter_catalog(text): 
+            for row in range(table_widget_catalog.rowCount()): 
+                match = False 
+                for col in range(table_widget_catalog.columnCount()): 
+                    item = table_widget_catalog.item(row, col) 
+                    if item and text.lower() in item.text().lower(): 
+                        match = True 
+                        break 
+                table_widget_catalog.setRowHidden(row, not match)
+
+        search_bar.textChanged.connect(filter_catalog)
+
         top_layout.addWidget(catalog_top_button)
         top_layout.addWidget(search_bar)
         top_container.setLayout(top_layout)
@@ -98,13 +111,12 @@ class MainWindow(QMainWindow):
 
         phones = db.fetch_query('SELECT `model`, `article`, `in_stock`, `price`, `smartphone_id` FROM `smartphone`')
 
-        for row_data in phones:
-            row_position = table_widget_catalog.rowCount()
-            table_widget_catalog.insertRow(row_position)
-            for col, value in enumerate(row_data):
-                table_widget_catalog.setItem(row_position, col, QTableWidgetItem(str(value)))
-
-
+        if phones:  # Если данные есть, заполняем таблицу
+            for row_data in phones:
+                row_position = table_widget_catalog.rowCount()
+                table_widget_catalog.insertRow(row_position)
+                for col, value in enumerate(row_data):
+                    table_widget_catalog.setItem(row_position, col, QTableWidgetItem(str(value)))
 
         left_layout.addWidget(top_container)
         left_layout.addWidget(table_widget_catalog)
@@ -180,7 +192,6 @@ class MainWindow(QMainWindow):
         characteristics_value.setAlignment(Qt.AlignLeft)
         characteristics_value.setStyleSheet("font-size: 20px;")
         right_layout.addWidget(characteristics_value)
-        # TODO: Подключить данные описания характеристик из базы данных
 
         # Распределение свободного пространства
         right_layout.addStretch()
@@ -200,8 +211,8 @@ class MainWindow(QMainWindow):
         add_to_cart_button = QPushButton('В корзину')
         add_to_cart_button.setFixedHeight(50)
         add_to_cart_button.setStyleSheet("font-size: 24px;")
-        # TODO: Добавить функционал для добавления товара в корзину
-        right_layout.addWidget(add_to_cart_button)
+        right_layout.addWidget(add_to_cart_button) 
+        add_to_cart_button.clicked.connect(lambda: self.add_selected_to_cart(table_widget_catalog))
 
         right_container.setLayout(right_layout)
 
@@ -218,20 +229,136 @@ class MainWindow(QMainWindow):
 
         def get_selected_id():
             selected_row = table_widget_catalog.currentRow()
-
-            # Извлекаем значение из первого столбца (ID)
-            if selected_row != -1:  # Если строка выделена
-                item = table_widget_catalog.item(selected_row, 4)  # Первый столбец
-                if item:  # Проверяем, есть ли значение
-                    id_value = item.text()
-            params = db.fetch_query('SELECT `model`, `article` FROM `smartphone` where `smartphone_id` = %s', (id_value, ))[0]
-            title_label.setText(params[0])
-            article_label.setText(params[1])
+            
+            if selected_row != -1:
+                # Получаем ID смартфона
+                smartphone_id = table_widget_catalog.item(selected_row, 4).text()
+                
+                # Получаем все данные о смартфоне
+                params = db.fetch_query('''
+                    SELECT s.model, s.article, s.price, s.in_stock, s.characteristic 
+                    FROM smartphone s 
+                    WHERE s.smartphone_id = %s
+                ''', (smartphone_id,))[0]
+                
+                # Обновляем все поля
+                title_label.setText(params[0])  # Название
+                price_value.setText(f"{params[2]:.2f} ₽")  # Цена
+                article_value.setText(params[1])  # Артикул
+                characteristics_value.setText(params[4])  # Характеристики
+                availability_value.setText(str(params[3]))  # В наличии
 
             
         table_widget_catalog.itemSelectionChanged.connect(get_selected_id)
 
+    def add_selected_to_cart(self, table_widget_catalog):
+        """Добавление выделенного смартфона в корзину"""
+        try:
+            # Получаем выбранную строку
+            selected_row = table_widget_catalog.currentRow()
+            if selected_row == -1:
+                QMessageBox.warning(self, "Ошибка", "Выберите смартфон для добавления в корзину.")
+                return
 
+            # Получаем ID смартфона из последнего скрытого столбца
+            smartphone_id_item = table_widget_catalog.item(selected_row, 4)  # 'pk' находится в пятом столбце
+            if not smartphone_id_item:
+                QMessageBox.warning(self, "Ошибка", "Не удалось получить ID смартфона.")
+                return
+
+            smartphone_id = int(smartphone_id_item.text())
+
+            # Вызываем функцию добавления в корзину с переданным ID
+            self.add_to_cart(smartphone_id)
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", f"Не удалось выполнить добавление в корзину: {str(e)}")
+
+    def add_to_cart(self, smartphone_id=None, quantity=1):
+        """Добавление смартфона в корзину с учетом остатка in_stock"""
+        try:
+            # Если smartphone_id не передан, пытаемся получить его из выделенной строки
+            if smartphone_id is None:
+                QMessageBox.warning(self, "Ошибка", "Не выбран смартфон для добавления в корзину.")
+                return
+
+            # Получаем данные о смартфоне
+            smartphone_data = db.fetch_query(
+                "SELECT in_stock, model FROM smartphone WHERE smartphone_id = %s",
+                (smartphone_id,)
+            )
+            
+            if not smartphone_data:
+                QMessageBox.warning(self, "Ошибка", "Смартфон не найден.")
+                return
+
+            in_stock, model = smartphone_data[0]
+
+            # Проверяем, достаточно ли товара на складе
+            if in_stock < quantity:
+                QMessageBox.warning(self,"Ошибка","Недостаточно товара на складе.")
+                return
+
+            # Получаем ID корзины для текущего устройства
+            cart_id = self.get_or_create_cart_id()
+            if not cart_id:
+                QMessageBox.critical(self, "Ошибка", "Не удалось создать корзину.")
+                return
+
+            # Проверяем, существует ли товар в корзине
+            existing_item = db.fetch_query(
+                "SELECT quantity FROM cart_smartphone WHERE cart_id = %s AND smartphone_id = %s",
+                (cart_id, smartphone_id)
+            )
+
+            if existing_item:
+                # Если товар уже в корзине, обновляем количество
+                new_quantity = existing_item[0][0] + quantity
+                db.execute_query(
+                    "UPDATE cart_smartphone SET quantity = %s WHERE cart_id = %s AND smartphone_id = %s",
+                    (new_quantity, cart_id, smartphone_id)
+                )
+            else:
+                # Если товара нет в корзине, добавляем его
+                db.execute_query(
+                    "INSERT INTO cart_smartphone (cart_id, smartphone_id, quantity) VALUES (%s, %s, %s)",
+                    (cart_id, smartphone_id, quantity)
+                )
+
+            # Уменьшаем количество на складе
+            db.execute_query(
+                "UPDATE smartphone SET in_stock = in_stock - %s WHERE smartphone_id = %s",
+                (quantity, smartphone_id)
+            )
+
+            db.commit()
+            QMessageBox.information(self, "Успех", f"{model} добавлен в корзину.")
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", f"Не удалось добавить смартфон в корзину: {str(e)}")
+
+
+
+
+    def get_or_create_cart_id(self):
+        """Создание или получение ID корзины для текущего устройства"""
+        try:
+            # Уникальный идентификатор для устройства (например, в реальном проекте может быть user_id)
+            device_id = "default_device_id"  # Замените на реальную логику идентификации устройства
+
+            # Проверяем, существует ли корзина для устройства
+            cart = db.fetch_query("SELECT cart_id FROM cart WHERE device_id = %s LIMIT 1", (device_id,))
+
+            if cart:
+                return cart[0][0]  # Возвращаем существующий cart_id
+            else:
+                # Создаем новую корзину
+                db.execute_query("INSERT INTO cart (device_id) VALUES (%s)", (device_id,))
+                db.commit()
+
+                # Получаем ID только что созданной корзины
+                return db.fetch_query("SELECT LAST_INSERT_ID()")[0][0]
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", f"Не удалось создать или получить корзину: {str(e)}")
+            return None
 
     def show_clients(self):
         clients_layout = QVBoxLayout()
@@ -280,7 +407,6 @@ class MainWindow(QMainWindow):
         self.replace_content_widget(new_content_widget)
 
     def show_cart(self):
-        
         cart_layout = QHBoxLayout()
 
         # Левый контейнер с таблицей
@@ -299,7 +425,34 @@ class MainWindow(QMainWindow):
         clear_button.setIcon(QIcon('image/clear.png'))
         clear_button.setIconSize(clear_button.size())
 
-        # TODO: Добавить функцию для кнопки очистки
+        def clear_cart():
+            cart_id = self.get_or_create_cart_id()
+            if not cart_id:
+                QMessageBox.information(self, "Корзина", "Корзина пуста.")
+                return
+
+            # SQL-запрос для получения данных из корзины перед очисткой
+            cart_items = db.fetch_query('''
+                SELECT smartphone_id, quantity 
+                FROM cart_smartphone 
+                WHERE cart_id = %s
+            ''', (cart_id,))
+
+            # Восстановление количества смартфонов на складе
+            for item in cart_items:
+                smartphone_id, quantity = item
+                db.execute_query(
+                    "UPDATE smartphone SET in_stock = in_stock + %s WHERE smartphone_id = %s",
+                    (quantity, smartphone_id)
+                )
+            db.execute_query('DELETE FROM cart_smartphone WHERE cart_id = %s', (cart_id,))
+
+            db.commit()
+            QMessageBox.information(self, "Успех", "Корзина очищена.")
+            self.show_cart()  # Перезагрузка интерфейса корзины
+
+        clear_button.clicked.connect(clear_cart)
+
 
         top_layout.addWidget(cart_label)
         top_layout.addStretch()
@@ -307,10 +460,74 @@ class MainWindow(QMainWindow):
         top_container.setLayout(top_layout)
 
         table_widget_cart = QTableWidget()
-        table_widget_cart.setColumnCount(4)
+        table_widget_cart.setColumnCount(5)  # Модель, Артикул, Количество, Цена, Удалить
         table_widget_cart.setHorizontalHeaderLabels([
-            'X', 'Название', 'Артикул', 'Цена'
+            ' ', 'Название', 'Артикул', 'Количество', 'Цена'
         ])
+    # Получаем ID корзины для текущего устройства
+        cart_id = self.get_or_create_cart_id()
+        if not cart_id:
+            QMessageBox.information(self, "Корзина", "Корзина пуста.")
+            return
+
+        # SQL-запрос для получения данных из корзины
+        carts = db.fetch_query('''
+            SELECT 
+                s.model AS smartphone_name, 
+                s.article AS smartphone_article, 
+                cs.quantity, 
+                s.price, 
+                (cs.quantity * s.price) AS total_price,
+                cs.smartphone_id
+            FROM cart_smartphone cs
+            JOIN smartphone s ON cs.smartphone_id = s.smartphone_id
+            WHERE cs.cart_id = %s
+        ''', (cart_id,))
+
+        # Проверяем, есть ли товары в корзине
+        if not carts:
+            QMessageBox.information(self, "Корзина", "Корзина пуста.")
+            return
+
+        # Заполняем таблицу данными
+        for row_index, cart_item in enumerate(carts):
+            model, article, quantity, price, total_price, smartphone_id = cart_item
+
+            row_position = table_widget_cart.rowCount()
+            table_widget_cart.insertRow(row_position)
+
+            # Кнопка для удаления товара из корзины
+            remove_button = QPushButton('X')
+            remove_button.setFixedSize(30, 30)
+            remove_button.clicked.connect(lambda _, sid=smartphone_id, qty=quantity: remove_item(smartphone_id=sid, cart_id=cart_id, quantity=qty))
+
+            # Заполняем данные в таблице
+            table_widget_cart.setCellWidget(row_position, 0, remove_button)  # Кнопка удаления
+            table_widget_cart.setItem(row_position, 1, QTableWidgetItem(model))  # Название
+            table_widget_cart.setItem(row_position, 2, QTableWidgetItem(article))  # Артикул
+            table_widget_cart.setItem(row_position, 3, QTableWidgetItem(str(quantity)))  # Количество
+            table_widget_cart.setItem(row_position, 4, QTableWidgetItem(f"{total_price:.2f}"))  # Цена
+
+        def remove_item(smartphone_id=smartphone_id, cart_id=cart_id, quantity=quantity):
+            try:
+                # Восстановление количества смартфонов на складе
+                db.execute_query(
+                    "UPDATE smartphone SET in_stock = in_stock + %s WHERE smartphone_id = %s",
+                    (quantity, smartphone_id)
+                )
+                
+                # Удаление товара из корзины
+                db.execute_query(
+                    "DELETE FROM cart_smartphone WHERE cart_id = %s AND smartphone_id = %s",
+                    (cart_id, smartphone_id)
+                )
+                
+                db.commit()
+                QMessageBox.information(self, "Корзина", "Товар удален из корзины.")
+                self.show_cart()  # Перезагрузка интерфейса корзины
+            except Exception as e:
+                QMessageBox.critical(self, "Ошибка", f"Не удалось удалить товар: {str(e)}")
+
 
         left_layout.addWidget(top_container)
         left_layout.addWidget(table_widget_cart)
@@ -331,7 +548,7 @@ class MainWindow(QMainWindow):
         spacer = QWidget()
         spacer.setFixedHeight(60)  # Расстояние между Названием и Ценой
 
-        total_price_field = QLabel('')
+        total_price_field = QLabel('')  # Будем обновлять общую стоимость здесь
         total_price_field.setStyleSheet("font-size: 30px;")
 
         discount_label = QLabel('Скидка')
@@ -347,10 +564,67 @@ class MainWindow(QMainWindow):
         name_input.setPlaceholderText('ФИО')
 
         phone_input = QLineEdit()
-        phone_input.setPlaceholderText('Номер телефона')
+        phone_input.setInputMask('+0-(000)-000-0000')  # Устанавливаем начальный код страны
+
+        # Создаем выпадающий список для существующих клиентов
+        client_list = QComboBox()
+        client_list.setFixedHeight(50)
+        client_list.setStyleSheet("font-size: 16px;")
+        client_list.hide()  # Изначально скрыт
+
+        def search_clients(phone_text):
+            # Получаем только цифры из номера телефона
+            digits = ''.join(filter(str.isdigit, phone_text))
+            
+            if len(digits) >= 3:  # Начинаем поиск после ввода минимум 3 цифр
+                # Формируем шаблон для поиска
+                search_pattern = f"%{digits}%"
+                
+                # Поиск клиентов с похожими номерами телефонов
+                clients = db.fetch_query("""
+                    SELECT 
+                        CONCAT(lastname, ' ', firstname, ' ', COALESCE(patronymic, '')) as full_name,
+                        phone_number
+                    FROM client 
+                    WHERE REPLACE(REPLACE(REPLACE(REPLACE(phone_number, '+', ''), '(', ''), ')', ''), '-', '') LIKE %s
+                    LIMIT 5
+                """, (search_pattern,))
+                
+                if clients:
+                    client_list.clear()
+                    client_list.addItem("Выберите клиента...")  # Добавляем подсказку
+                    for full_name, phone in clients:
+                        client_list.addItem(f"{full_name} ({phone})")
+                    client_list.show()
+                else:
+                    client_list.hide()
+            else:
+                client_list.hide()
+
+        # Обработчик изменения текста в поле телефона
+        def on_phone_text_changed(text):
+            # Убираем все нецифровые символы для поиска
+            search_clients(text)
+
+        # Обработчик выбора клиента из списка
+        def on_client_selected(index):
+            if index > 0:  # Пропускаем первый элемент ("Выберите клиента...")
+                selected_text = client_list.currentText()
+                # Извлекаем телефон и имя из строки формата "ФИО (телефон)"
+                name = selected_text[:selected_text.rfind("(")].strip()
+                phone = selected_text[selected_text.rfind("("):selected_text.rfind(")")].strip()
+
+                
+                name_input.setText(name)
+                phone_input.setText(phone)
+                client_list.hide()
+
+        phone_input.textChanged.connect(on_phone_text_changed)
+        client_list.currentIndexChanged.connect(on_client_selected)
 
         receipt_button = QPushButton('Чек')
         payment_button = QPushButton('Оплата')
+        payment_button.clicked.connect(lambda: self.process_payment(cart_id, name_input.text(), phone_input.text()))
 
         right_layout.addWidget(title_label)
         right_layout.addWidget(spacer)  # Добавлен отступ
@@ -361,6 +635,7 @@ class MainWindow(QMainWindow):
         right_layout.addWidget(customer_data_label)
         right_layout.addWidget(name_input)
         right_layout.addWidget(phone_input)
+        right_layout.addWidget(client_list)
         right_layout.addStretch()
         right_layout.addWidget(receipt_button)
         right_layout.addWidget(payment_button)
@@ -375,6 +650,135 @@ class MainWindow(QMainWindow):
 
         self.replace_content_widget(new_content_widget)
 
+        # Функция для обновления количества в корзине
+        def update_quantity(cart_item_id, smartphone_id, new_quantity):
+            # Получаем текущее количество в корзине
+            current_quantity = db.fetch_query(
+                "SELECT quantity FROM cart_smartphone WHERE cart_item_id = %s", 
+                (cart_item_id,)
+            )[0][0]
+
+            # Рассчитываем разницу
+            difference = new_quantity - current_quantity
+
+            # Обновляем количество в корзине
+            db.execute_query(
+                "UPDATE cart_smartphone SET quantity = %s WHERE cart_item_id = %s",
+                (new_quantity, cart_item_id)
+            )
+
+            # Обновляем количество на складе
+            db.execute_query(
+                "UPDATE smartphone SET in_stock = in_stock - %s WHERE smartphone_id = %s",
+                (-difference, smartphone_id)
+            )
+
+            # Обновляем интерфейс
+            self.show_cart()
+
+        # Добавляем обработчик для изменения количества
+        def on_quantity_changed(row):
+            cart_item_id = int(table_widget_cart.item(row, 0).text())  # ID товара в корзине
+            smartphone_id = int(table_widget_cart.item(row, 2).text())  # ID смартфона
+            new_quantity = int(table_widget_cart.item(row, 3).text())  # Новое количество
+
+            update_quantity(cart_item_id, smartphone_id, new_quantity)
+
+        # Подключаем обработчик изменения ячеек таблицы
+        table_widget_cart.cellChanged.connect(lambda row, _ : on_quantity_changed(row))  
+
+    def process_payment(self, cart_id, full_name, phone_number):
+        """Обработка оплаты и запись данных клиента и продажи в БД"""
+        try:
+            # Проверка формата ФИО
+            name_parts = full_name.strip().split()
+            if len(name_parts) < 2 or len(name_parts) > 3:
+                QMessageBox.warning(self, "Ошибка", "Введите ФИО в формате: Фамилия Имя Отчество.")
+                return
+
+            lastname = name_parts[0]
+            firstname = name_parts[1]
+            patronymic = name_parts[2] if len(name_parts) == 3 else None
+
+            # Проверка номера телефона
+            import re
+            phone_pattern = re.compile(r"^\+\d-\(\d{3}\)-\d{3}-\d{4}$")
+            if not phone_pattern.match(phone_number):
+                QMessageBox.warning(self, "Ошибка", "Введите номер телефона в формате: +0-(000)-000-0000.")
+                return
+
+            # Проверяем, существует ли клиент с таким номером телефона
+            existing_client = db.fetch_query(
+                "SELECT client_id FROM client WHERE phone_number = %s",
+                (phone_number,)
+            )
+
+            if existing_client:
+                # Используем существующего клиента
+                client_id = existing_client[0][0]
+            else:
+                # Создаем нового клиента
+                db.execute_query(
+                    "INSERT INTO client (lastname, firstname, patronymic, phone_number) VALUES (%s, %s, %s, %s)",
+                    (lastname, firstname, patronymic, phone_number)
+                )
+                db.commit()
+                client_id = db.fetch_query("SELECT LAST_INSERT_ID()")[0][0]
+
+            # Обновляем корзину с добавлением client_id
+            db.execute_query(
+                "UPDATE cart SET client_id = %s WHERE cart_id = %s",
+                (client_id, cart_id)
+            )
+            db.commit()
+
+            # Получение общей суммы из корзины
+            total_price = db.fetch_query(
+                "SELECT SUM(cs.quantity * s.price) FROM cart_smartphone cs "
+                "JOIN smartphone s ON cs.smartphone_id = s.smartphone_id WHERE cs.cart_id = %s",
+                (cart_id,)
+            )[0][0]
+
+            # Добавление продажи в таблицу sell
+            db.execute_query(
+                "INSERT INTO sell (date_sell, client_id, total_price) VALUES (NOW(), %s, %s)",
+                (client_id, total_price)
+            )
+            db.commit()
+
+            # Получаем sell_id последней продажи
+            sell_id = db.fetch_query("SELECT LAST_INSERT_ID()")[0][0]
+
+            # Получаем данные о смартфонах из корзины
+            cart_items = db.fetch_query(
+                "SELECT cs.smartphone_id, cs.quantity, s.price "
+                "FROM cart_smartphone cs "
+                "JOIN smartphone s ON cs.smartphone_id = s.smartphone_id "
+                "WHERE cs.cart_id = %s",
+                (cart_id,)
+            )
+
+            # Сохраняем данные о проданных смартфонах
+            for smartphone_id, quantity, price in cart_items:
+                db.execute_query(
+                    "INSERT INTO sell_smartphone (sell_id, smartphone_id, quantity, price) "
+                    "VALUES (%s, %s, %s, %s)",
+                    (sell_id, smartphone_id, quantity, price)
+                )
+            db.commit()
+
+            # Очищаем корзину
+            db.execute_query("DELETE FROM cart_smartphone WHERE cart_id = %s", (cart_id,))
+            db.commit()
+
+            # Сообщение об успешной оплате
+            QMessageBox.information(self, "Успех", "Покупка успешно подтверждена.")
+            self.show_cart()
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", f"Не удалось обработать оплату: {str(e)}")
+
+
+
     def show_management(self):
         management_layout = QVBoxLayout()
 
@@ -387,6 +791,17 @@ class MainWindow(QMainWindow):
 
         search_bar = QLineEdit()
         search_bar.setPlaceholderText('Поиск по каталогу...')
+        def filter_catalog(text): 
+            for row in range(table_widget_management.rowCount()): 
+                match = False 
+                for col in range(table_widget_management.columnCount()): 
+                    item = table_widget_management.item(row, col) 
+                    if item and text.lower() in item.text().lower(): 
+                        match = True 
+                        break 
+                table_widget_management.setRowHidden(row, not match)
+
+        search_bar.textChanged.connect(filter_catalog)
 
         # Кнопка добавления рядом с строкой поиска
         add_button = QPushButton()
@@ -454,7 +869,20 @@ class MainWindow(QMainWindow):
         self.add_window.exec_()
 
 
-    # def delete_smartphone(self, smartphone_id, row, table_widget):
+    def delete_smartphone(self, smartphone_id, row, table_widget):
+        """Удаляет выбранный смартфон из базы данных и из таблицы"""
+        try:
+            # Запрос на удаление смартфона из базы данных
+            db.execute_query('DELETE FROM `smartphone` WHERE `smartphone_id` = %s', (smartphone_id,))
+            db.commit()
+
+            # Удаляем строку из таблицы
+            table_widget.removeRow(row)
+
+            # Сообщение об успешном удалении
+            QMessageBox.information(self, "Удалено", "Смартфон успешно удален.")
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", f"Не удалось удалить смартфон: {str(e)}")
         
         
 
@@ -486,43 +914,62 @@ class MainWindow(QMainWindow):
 
 
     def show_sales(self):
+        """Отображение данных из таблицы продаж"""
         sales_layout = QVBoxLayout()
 
-        # Верхняя часть: заголовок и строка поиска
         top_container = QWidget()
         top_container.setFixedHeight(100)
         top_layout = QHBoxLayout()
 
         sales_top_button = QLabel('Продажи')
-
         top_layout.addWidget(sales_top_button)
         top_container.setLayout(top_layout)
 
-        # Нижняя часть: таблица
         bottom_container = QWidget()
         bottom_layout = QVBoxLayout()
 
         table_widget_sales = QTableWidget()
-        table_widget_sales.setColumnCount(6)
+        table_widget_sales.setColumnCount(5)
         table_widget_sales.setHorizontalHeaderLabels([
-            'Порядковый номер', 'Название', 'Артикул', 'Покупатель', 'Цена', 'Дата'
+            'Модель', 'Артикул', 'ФИО', 'Сумма', 'Дата'
         ])
+
+        try:
+            # Выполняем запрос для получения данных о продажах
+            sales = db.fetch_query('''
+            SELECT 
+                s.model,
+                s.article,
+                CONCAT(cl.lastname, ' ', cl.firstname, ' ', COALESCE(cl.patronymic, '')) AS full_name,
+                (ss.quantity * ss.price) as item_total_price,
+                sel.date_sell
+            FROM sell sel
+            INNER JOIN client cl ON sel.client_id = cl.client_id
+            INNER JOIN sell_smartphone ss ON sel.sell_id = ss.sell_id
+            INNER JOIN smartphone s ON ss.smartphone_id = s.smartphone_id
+            ORDER BY sel.date_sell DESC
+            ''')
+
+            # Заполняем таблицу данными
+            for row_data in sales:
+                row_position = table_widget_sales.rowCount()
+                table_widget_sales.insertRow(row_position)
+                for col, value in enumerate(row_data):
+                    table_widget_sales.setItem(row_position, col, QTableWidgetItem(str(value)))
+
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", f"Не удалось загрузить данные: {str(e)}")
 
         bottom_layout.addWidget(table_widget_sales)
         bottom_container.setLayout(bottom_layout)
 
-        # Компоновка раздела "Продажи"
         sales_layout.addWidget(top_container)
         sales_layout.addWidget(bottom_container)
 
-        # Создание нового виджета для замены контента
         new_content_widget = QWidget()
-        new_content_layout = QVBoxLayout()
-        new_content_widget.setLayout(new_content_layout)
-        new_content_layout.addLayout(sales_layout)
-
+        new_content_widget.setLayout(sales_layout)
         self.replace_content_widget(new_content_widget)
-     
+
 
     def replace_content_widget(self, new_widget):
         self.main_splitter.widget(1).deleteLater()
