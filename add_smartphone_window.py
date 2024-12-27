@@ -1,4 +1,6 @@
 from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QLineEdit, QPushButton, QFileDialog, QTextEdit, QHBoxLayout, QComboBox, QInputDialog, QMessageBox
+from PyQt5.QtGui import QImage, QPixmap
+from PyQt5.QtCore import QByteArray, QBuffer
 from model import db
 
 class AddSmartphoneWindow(QDialog):
@@ -6,6 +8,7 @@ class AddSmartphoneWindow(QDialog):
         super().__init__()
         self.setWindowTitle("Добавить смартфон")
         self.setFixedSize(400, 600)
+        self.photos = []
         
         self.init_ui()
 
@@ -104,14 +107,22 @@ class AddSmartphoneWindow(QDialog):
             stock = int(self.stock_input.text())
 
             if smartphone_id:  # Редактирование существующего смартфона
-                db.execute_query('UPDATE `smartphone` SET `article` = %s, `model` = %s, `price` = %s, `brand_id` = %s, `characteristic` = %s, `in_stock` = %s WHERE `smartphone_id` = %s',
+                db.execute_query(
+                    'UPDATE `smartphone` SET `article` = %s, `model` = %s, `price` = %s, `brand_id` = %s, `characteristic` = %s, `in_stock` = %s WHERE `smartphone_id` = %s',
                     (article, model, price, brand_id, description, stock, smartphone_id)
                 )
+                self.save_photos(smartphone_id, is_editing=True)
                 QMessageBox.information(self, "Успех", "Смартфон успешно обновлен.")
             else:  # Добавление нового смартфона
-                db.execute_query('INSERT INTO `smartphone` (`article`, `model`, `price`, `brand_id`, `characteristic`, `in_stock`) VALUES (%s, %s, %s, %s, %s, %s)',
+                db.execute_query(
+                    'INSERT INTO `smartphone` (`article`, `model`, `price`, `brand_id`, `characteristic`, `in_stock`) VALUES (%s, %s, %s, %s, %s, %s)',
                     (article, model, price, brand_id, description, stock)
                 )
+                # Получаем ID добавленного смартфона
+                smartphone_id = db.fetch_query('SELECT LAST_INSERT_ID()')[0][0]
+
+                self.save_photos(smartphone_id)
+
                 QMessageBox.information(self, "Успех", "Смартфон успешно добавлен.")
 
             db.commit()
@@ -119,9 +130,58 @@ class AddSmartphoneWindow(QDialog):
         except Exception as e:
             QMessageBox.critical(self, "Ошибка", f"Не удалось сохранить смартфон: {str(e)}")
 
+
         
 
     def upload_photos(self):
         # Функция загрузки фотографий
-        QFileDialog.getOpenFileName(self, "Выбрать фотографии", "", "Images (*.png *.xpm *.jpg)")
+        file_paths, _ = QFileDialog.getOpenFileNames(self, "Выбрать фотографии", "", "Images (*.png *.xpm *.jpg)")
+
+        if file_paths:
+            if not hasattr(self, 'photos'):
+                self.photos = []  # Инициализация списка фотографий, если его нет
+            for path in file_paths:
+                # Конвертируем изображение в формат BLOB
+                image = QImage(path)
+                byte_array = QByteArray()
+                buffer = QBuffer(byte_array)
+                image.save(buffer, "PNG")
+                self.photos.append(byte_array)  # Добавляем изображение в список
+
+            # Обновляем текст кнопки
+            photo_count = len(self.photos)
+            self.sender().setText(f"Добавлена {photo_count} фотография" if photo_count == 1 else f"Добавлено {photo_count} фотографий")
+
+            QMessageBox.information(self, "Фотографии загружены", "Фотографии успешно загружены.")
+            
+    def save_photos(self, smartphone_id, is_editing=False):
+        if not hasattr(self, 'photos') or not self.photos:
+            # Если фотографий нет, ничего не делаем
+            return
+
+        if is_editing:
+            # Удаляем старые фотографии, связанные с этим смартфоном
+            db.execute_query('DELETE FROM `photosmartphone` WHERE `smartphone_id` = %s', (smartphone_id,))
+            db.commit()
+
+        # Сохраняем новые фотографии в базу данных
+        for photo in self.photos:
+            photo_data = bytes(photo)  # Преобразуем QByteArray в bytes
+
+            # Сохраняем фото как BLOB в таблицу `photo`
+            db.execute_query('INSERT INTO `photo` (`photo`) VALUES (%s)', (photo_data,))
+            
+            # Получаем ID вставленной фотографии
+            photo_id = db.fetch_query('SELECT LAST_INSERT_ID()')[0][0]
+
+            # Связываем фотографию с конкретным смартфоном
+            db.execute_query('INSERT INTO `photosmartphone` (`smartphone_id`, `photo_id`) VALUES (%s, %s)', (smartphone_id, photo_id))
+            
+        db.commit()
+            
+        db.commit()
+
+            
+        db.commit()
+
 
