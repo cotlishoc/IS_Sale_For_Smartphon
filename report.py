@@ -29,7 +29,7 @@ class ReportWidget(QWidget):
         top_layout = QHBoxLayout()
 
         self.report_title_label = QLabel("Отчет:")
-        self.report_title_label.setStyleSheet("font-size: 18px; font-weight: bold;")
+        self.report_title_label.setStyleSheet("font-size: 52px; font-family: Arial;")
         top_layout.addWidget(self.report_title_label)
         top_container.setLayout(top_layout)
 
@@ -144,7 +144,7 @@ class ReportWidget(QWidget):
         right_container.setLayout(right_layout)
 
         # Устанавливаем минимальную ширину для правого контейнера
-        right_container.setFixedWidth(400)
+        right_container.setFixedWidth(600)
 
         # Добавляем контейнеры в основной макет
         report_layout.addWidget(left_container)
